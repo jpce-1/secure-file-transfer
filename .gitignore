@@ -1,0 +1,6 @@
+secret.key
+secret.txt
+received_files/
+venv/
+__pycache__/
+*.pyc
