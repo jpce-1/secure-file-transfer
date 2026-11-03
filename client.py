@@ -3,10 +3,18 @@ import hashlib
 import os
 import sys
 from cryptography.fernet import Fernet
+from transfer_protocol import (
+    CONNECT_TIMEOUT,
+    MAX_FILE_SIZE,
+    SOCKET_TIMEOUT,
+    ProtocolError,
+    receive_frame,
+    send_frame,
+    validate_filename,
+)
 
 # ── Configuration ──────────────────────────────────────
 PORT = 5001        # Must match server port
-BUFFER_SIZE = 4096 # Must match server buffer size
 KEY_FILE = 'secret.key'  # Encryption key file
 # ───────────────────────────────────────────────────────
 
@@ -29,17 +37,25 @@ def calculate_hash(file_data):
 
 
 def send_file(host, filepath):
-    if not os.path.exists(filepath):
+    if not os.path.isfile(filepath):
         print(f"[ERROR] File '{filepath}' not found!")
         sys.exit()
 
     key = load_key()
 
-    # Read the file
     with open(filepath, 'rb') as f:
-        file_data = f.read()
+        file_data = f.read(MAX_FILE_SIZE + 1)
+    if len(file_data) > MAX_FILE_SIZE:
+        print(f"[ERROR] File exceeds the {MAX_FILE_SIZE}-byte transfer limit.")
+        return
 
     filename = os.path.basename(filepath)
+    try:
+        validate_filename(filename)
+    except ProtocolError as e:
+        print(f"[ERROR] {e}")
+        return
+
     file_hash = calculate_hash(file_data)
     encrypted_data = encrypt_file(file_data, key)
 
@@ -50,43 +66,31 @@ def send_file(host, filepath):
     print(f"[INFO] Connecting to server at {host}:{PORT}...\n")
 
     try:
-        client_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        client_socket.connect((host, PORT))
-        print(f"[CONNECTION] Connected to server successfully!")
+        with socket.create_connection((host, PORT), timeout=CONNECT_TIMEOUT) as client_socket:
+            client_socket.settimeout(SOCKET_TIMEOUT)
+            print(f"[CONNECTION] Connected to server successfully!")
 
-        # Send filename
-        client_socket.send(filename.encode())
-        client_socket.recv(BUFFER_SIZE)
+            send_frame(client_socket, filename.encode("utf-8"))
+            send_frame(client_socket, file_hash.encode("ascii"))
+            client_socket.sendall(len(encrypted_data).to_bytes(8, "big"))
+            client_socket.sendall(encrypted_data)
 
-        # Send file hash
-        client_socket.send(file_hash.encode())
-        client_socket.recv(BUFFER_SIZE)
+            response = receive_frame(client_socket)
 
-        # Send encrypted file size
-        client_socket.send(str(len(encrypted_data)).encode())
-        client_socket.recv(BUFFER_SIZE)
-
-        # Send encrypted file data
-        print(f"[INFO] Encrypting and sending file...")
-        client_socket.sendall(encrypted_data)
-
-        # Wait for server response
-        response = client_socket.recv(BUFFER_SIZE).decode()
-
-        if response == 'SUCCESS':
+        if response == b'SUCCESS':
             print(f"[SUCCESS] File transferred securely! ✓")
             print(f"[SUCCESS] Integrity verified by server ✓")
-        elif response == 'INTEGRITY_FAILED':
+        elif response == b'INTEGRITY_FAILED':
             print(f"[ERROR] Server reported integrity check failed!")
+        elif response == b'ERROR':
+            print(f"[ERROR] Server rejected the transfer.")
         else:
-            print(f"[ERROR] Unexpected server response: {response}")
+            print(f"[ERROR] Unexpected server response: {response.decode('utf-8', errors='replace')}")
 
     except ConnectionRefusedError:
         print(f"[ERROR] Could not connect to server. Is it running?")
-    except Exception as e:
+    except (OSError, ProtocolError) as e:
         print(f"[ERROR] {e}")
-    finally:
-        client_socket.close()
 
 
 if __name__ == '__main__':
