@@ -11,6 +11,7 @@ A Python-based secure file transfer program that encrypts files before sending t
 -  **Any file type** — transfer PDFs, images, text files and more
 -  **Simple CLI interface** — easy to use from the terminal
 -  **Network ready** — works over local network between any two computers
+-  **Bounded transfers** — rejects files larger than 100 MiB and times out stalled connections
 
 ---
 
@@ -39,6 +40,10 @@ A Python-based secure file transfer program that encrypts files before sending t
 
     pip install -r requirements.txt
 
+Run the transfer tests with:
+
+    python -m unittest discover -s tests -v
+
 ---
 
 ##  How to Use
@@ -65,6 +70,10 @@ For testing on the same machine use:
 
     python client.py 127.0.0.1 secret.txt
 
+The client and server must use the same version of the transfer protocol. The
+protocol uses length-prefixed metadata and file-size framing; each connection
+times out after 30 seconds without network activity.
+
 ---
 
 ##  How the Security Works
@@ -90,6 +99,8 @@ For testing on the same machine use:
     secure-file-transfer/
     ├── server.py          # Receiving side — decrypts and saves files
     ├── client.py          # Sending side — encrypts and transfers files
+    ├── transfer_protocol.py # Shared framed TCP protocol and limits
+    ├── tests/             # Transfer protocol and server tests
     ├── secret.key         # Shared encryption key (auto-generated)
     ├── received_files/    # Folder where received files are saved
     ├── requirements.txt
